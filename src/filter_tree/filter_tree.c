@@ -9,7 +9,7 @@
 #include "filter_tree.h"
 #include "../parser/ast.h"
 #include "../query_executor.h"
-#include "../util/vector.h"
+#include "../util/arr.h"
 
 FT_FilterNode* LeftChild(const FT_FilterNode *node) { return node->cond.left; }
 FT_FilterNode* RightChild(const FT_FilterNode *node) { return node->cond.right; }
@@ -353,25 +353,24 @@ int FilterTree_applyFilters(const FT_FilterNode* root, const Record r) {
     return pass;
 }
 
-void _FilterTree_CollectAliases(const FT_FilterNode *root, TrieMap *aliases) {
+void _FilterTree_CollectModified(const FT_FilterNode *root, TrieMap *modified) {
     if(root == NULL) return;
 
     switch(root->t) {
         case FT_N_COND:
         {
-            _FilterTree_CollectAliases(root->cond.left, aliases);
-            _FilterTree_CollectAliases(root->cond.right, aliases);
+            _FilterTree_CollectModified(root->cond.left, modified);
+            _FilterTree_CollectModified(root->cond.right, modified);
             break;
         }
         case FT_N_PRED:
         {
-            /* Traverse left and right-hand expressions, adding all encountered aliases
+            /* Traverse left and right-hand expressions, adding all encountered modified
              * to the triemap.
-             * We'll typically encounter 0 or 1 aliases in each expression,
+             * We'll typically encounter 0 or 1 modified in each expression,
              * but there are multi-argument exceptions. */
-            AR_EXP_CollectAliases(root->pred.lhs, aliases);
-            AR_EXP_CollectAliases(root->pred.rhs, aliases);
-
+            AR_EXP_CollectEntityIDs(root->pred.lhs, modified);
+            AR_EXP_CollectEntityIDs(root->pred.rhs, modified);
             break;
         }
         default:
@@ -382,11 +381,11 @@ void _FilterTree_CollectAliases(const FT_FilterNode *root, TrieMap *aliases) {
     }
 }
 
-Vector *FilterTree_CollectAliases(const FT_FilterNode *root) {
+uint* FilterTree_CollectModified(const FT_FilterNode *root) {
     TrieMap *t = NewTrieMap();
-    _FilterTree_CollectAliases(root, t);
+    _FilterTree_CollectModified(root, t);
 
-    Vector *aliases = NewVector(char*, t->cardinality);
+    uint *modifies = array_new(uint, t->cardinality);
     TrieMapIterator *it = TrieMap_Iterate(t, "", 0);
     
     char *ptr;
@@ -394,14 +393,13 @@ Vector *FilterTree_CollectAliases(const FT_FilterNode *root) {
     void *value;
 
     while(TrieMapIterator_Next(it, &ptr, &len, &value)) {
-        char *alias = strdup(ptr);
-        alias[len] = 0;
-        Vector_Push(aliases, alias);
+        uint id = *(uint*)ptr;
+        modifies = array_append(modifies, id);
     }
 
     TrieMapIterator_Free(it);
     TrieMap_Free(t, NULL);
-    return aliases;
+    return modifies;
 }
 
 void _FilterTree_Print(const FT_FilterNode *root, int ident) {
